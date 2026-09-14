@@ -36,6 +36,7 @@ import json
 import base64
 import time
 import logging
+from urllib.parse import urlparse
 import requests
 from telegram import Update
 from telegram.ext import (
@@ -43,12 +44,61 @@ from telegram.ext import (
     filters, ContextTypes
 )
 
+
+def _get_env(name: str, default: str):
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    return value.strip()
+
+
+def normalize_github_repo(value: str) -> str:
+    value = value.strip()
+    if not value:
+        return value
+
+    if value.startswith(("http://", "https://")):
+        parsed = urlparse(value)
+        host = parsed.netloc.lower()
+        path = parsed.path.strip("/")
+
+        if host.endswith(".github.io"):
+            repo_name = path.split("/")[-1] if path else ""
+            owner = host.split(".github.io")[0]
+            if owner and repo_name:
+                return f"{owner}/{repo_name}"
+
+        if host.endswith("github.com"):
+            parts = [part for part in path.split("/") if part and part != "repos"]
+            if len(parts) >= 2:
+                return f"{parts[0]}/{parts[1]}"
+
+    return value
+
+
 # ============== CONFIG ==============
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "PASTE_YOUR_BOT_TOKEN_HERE")
-GITHUB_TOKEN       = os.getenv("GITHUB_TOKEN", "PASTE_YOUR_GITHUB_PAT_HERE")
-GITHUB_REPO        = os.getenv("GITHUB_REPO", "yourusername/portfolio")  # e.g. "yakob/portfolio"
-GITHUB_BRANCH      = os.getenv("GITHUB_BRANCH", "main")
-ALLOWED_USER_ID    = int(os.getenv("ALLOWED_USER_ID", "0"))  # your telegram user id — 0 = anyone (NOT recommended)
+TELEGRAM_BOT_TOKEN = _get_env("TELEGRAM_BOT_TOKEN", "PASTE_YOUR_BOT_TOKEN_HERE")
+GITHUB_TOKEN       = _get_env("GITHUB_TOKEN", "PASTE_YOUR_GITHUB_PAT_HERE")
+GITHUB_REPO        = normalize_github_repo(_get_env("GITHUB_REPO", "yourusername/portfolio"))
+GITHUB_BRANCH      = _get_env("GITHUB_BRANCH", "main")
+ALLOWED_USER_ID    = int(_get_env("ALLOWED_USER_ID", "0"))
+
+
+def validate_config():
+    missing = []
+    if TELEGRAM_BOT_TOKEN.startswith("PASTE_"):
+        missing.append("TELEGRAM_BOT_TOKEN")
+    if GITHUB_TOKEN.startswith("PASTE_"):
+        missing.append("GITHUB_TOKEN")
+    if GITHUB_REPO.startswith("yourusername/") and "yourusername" in GITHUB_REPO:
+        missing.append("GITHUB_REPO")
+    if not GITHUB_REPO or "/" not in GITHUB_REPO:
+        missing.append("GITHUB_REPO")
+    if ALLOWED_USER_ID == 0:
+        return False, "ALLOWED_USER_ID is 0; set your real Telegram user ID"
+    if missing:
+        return False, "Missing or placeholder env values: " + ", ".join(missing)
+    return True, "OK"
 
 # paths inside the repo
 PROJECTS_JSON_PATH = "projects.json"
